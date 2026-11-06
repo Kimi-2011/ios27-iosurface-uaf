@@ -167,3 +167,58 @@ bash harness/israce/run.sh
 # 判据：out/israce.ndjson 里出现「有 begin 无 end」的 lockdeg-N1-I* 即命中
 # panic 归档后反推 pc：static = pc_runtime - slide，应等于 0xfffffe000a34ff88
 ```
+
+---
+
+## 8. CVE 编号：**CVE-2026-112477**
+
+> 推断依据：Apple 安全公告 149230（iOS 27.2，2026-10-26）四要素逐项比对。
+
+### 8.1 公告原文
+
+```
+### IOSurface （1 条）
+
+- CVE-2026-112477
+  - 影响：An app may be able to cause unexpected system termination or corrupt kernel memory
+  - 修复：A race condition was addressed with improved locking.
+```
+
+**整个公告里只有这 1 条 IOSurface 条目。**
+
+### 8.2 四要素逐项对齐
+
+| 公告要素 | 本研究的证据 | 吻合 |
+|---|---|---|
+| 组件 **IOSurface** | 故障 pc `0xfffffe000a34ff88` 落在 `com.apple.iokit.IOSurface(402.8)` 的 `__TEXT_EXEC` 范围内（`0xa3257c0`…`0xa369ddc`） | ✓ |
+| **An app may be able to** | 触发全程只用 `IOServiceOpen` / `IOConnectCallAsyncMethod` / `IOSurfaceCreate` / `IOSurfaceLock`，`ents.plist` 44 项全为 `com.apple.developer.*`，**无任何 `com.apple.private.*`** | ✓ |
+| **unexpected system termination or corrupt kernel memory** | 实测 4/4 靶向内核 panic（`Kernel tag check fault`）；机制是注册表节点持有已释放对象 ⇒ 内核内存破坏 | ✓ |
+| **A race condition was addressed with improved locking** | 27.2 三处改动全在 `root+0x150` 互斥量内：`#802` 锁内置 `+0xf1=1`；`#799` 锁内测 `+0xf1` → `kIOReturnNotAttached`；`#802` 从 teardown 末尾提到最前。**字面即「加锁」** | ✓ |
+
+### 8.3 排他性验证
+
+公告全文共 **2** 条 `improved locking`：
+
+| CVE | 组件 | 是否可能是本漏洞 |
+|---|---|---|
+| **CVE-2026-112477** | **IOSurface** | **是** |
+| CVE-2026-112686 | **WebKit** | 否 —— 影响描述为「Processing maliciously crafted web content…」，是浏览器引擎的用户态竞态 |
+
+⇒ **在内核 IOSurface 组件上、以「加锁」方式修复的竞态，公告里只有 CVE-2026-112477 一个。**
+
+### 8.4 置信度与保留
+
+**置信度：高。** 组件、可达性、影响类型、修复手法四项全中，且无并列候选。
+
+**保留一点**：公告不公开函数地址，无法做「地址级」唯一映射。
+若后续有第三方公开分析指向不同编号，应以那为准；本推断的证据是可复核的（公告文本 + 补丁反汇编）。
+
+**注意**：这与 `out/KERNEL-OOB-WRITE.md` §15 里 `com.apple.kernel` 的 CVE-2026-112507
+是**两个不同的问题**，不要混淆：
+
+| | CVE-2026-112477（本文件） | CVE-2026-112507 |
+|---|---|---|
+| 组件 | IOSurface | Kernel |
+| 类型 | UAF（竞态） | 越界写 |
+| 修复 | improved locking | improved bounds checking |
+| 状态 | **真机 4/4 复现** | 可控性未验证 |
