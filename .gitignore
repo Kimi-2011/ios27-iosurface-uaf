@@ -1,0 +1,13 @@
+# 固件镜像、内核缓存、崩溃日志、签名产物一律不入库
+*.dmg
+*.aea
+*.pkg
+*.part
+*.segs/
+kc.*
+*.ips
+*.ndjson
+*.bin
+Payload/
+deps/
+fw/
